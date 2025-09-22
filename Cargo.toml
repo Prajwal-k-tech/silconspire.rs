@@ -2,7 +2,18 @@
 name = "silconspire"
 version = "0.1.0"
 edition = "2021"
+description = "High-performance QAP solver using hybrid Grey Wolf Optimizer + Tabu Search"
+homepage = "https://github.com/Prajwal-k-tech/silconspire.rs"
+repository = "https://github.com/Prajwal-k-tech/silconspire.rs"
+license = "MIT"
+readme = "README.md"
+keywords = ["optimization", "qap", "metaheuristic", "cli", "algorithm"]
+categories = ["command-line-utilities", "science"]
 
 [dependencies]
-rand = "0.9.2"
+rand = "0.8.5"
 clap = { version = "4.0", features = ["derive"] }
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-{ target }{ archive-suffix }"
+bin-dir = "{ bin }{ binary-ext }"

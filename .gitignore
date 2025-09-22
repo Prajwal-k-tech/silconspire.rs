@@ -1,0 +1,21 @@
+# Rust build artifacts
+/target/
+Cargo.lock
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test files (keep example files but ignore temporary ones)
+test_error.txt
+verify_optimal
+
+# Backup files
+*.bak
+*.orig
