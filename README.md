@@ -51,4 +51,4 @@ cargo clippy --all-targets --locked -- -D warnings
 
 ## Attribution
 
-This is an educational optimization project. The cleanroom narrative and included data are illustrative. See repository history and referenced papers for implementation context.
+This is an educational optimization prototype. The cleanroom narrative and included data are illustrative. See the source and Git history for implementation details.

@@ -2,7 +2,7 @@
 name = "silconspire"
 version = "0.1.0"
 edition = "2021"
-description = "High-performance QAP solver using hybrid Grey Wolf Optimizer + Tabu Search"
+description = "Educational QAP heuristic using Grey Wolf Optimization and Tabu Search"
 homepage = "https://github.com/Prajwal-k-tech/silconspire.rs"
 repository = "https://github.com/Prajwal-k-tech/silconspire.rs"
 license = "MIT"
