@@ -12,11 +12,11 @@ struct Args {
     input_file: String,
 
     /// Number of wolves in the pack
-    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(usize).range(3..))]
+    #[arg(long, default_value_t = 30)]
     pack_size: usize,
 
     /// Number of GWO iterations
-    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(usize).range(1..))]
+    #[arg(long, default_value_t = 100)]
     max_iterations: usize,
 
     /// Number of iterations for the Tabu Search
@@ -24,8 +24,21 @@ struct Args {
     ts_iterations: usize,
 
     /// The size of the tabu list
-    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(usize).range(1..))]
+    #[arg(long, default_value_t = 10)]
     tabu_tenure: usize,
+}
+
+fn validate_args(args: &Args) -> Result<(), &'static str> {
+    if args.pack_size < 3 {
+        return Err("pack size must be at least 3 (needed for alpha/beta/delta)");
+    }
+    if args.max_iterations == 0 {
+        return Err("max iterations must be positive");
+    }
+    if args.tabu_tenure == 0 {
+        return Err("tabu tenure must be positive");
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -49,11 +62,15 @@ fn load_problem(filename: &str) -> Result<Problem, io::Error> {
     let mut line_idx = 0;
 
     // Read problem size
-    let first_line = lines.first().ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "Missing problem size")
+    let first_line = lines
+        .first()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing problem size"))?;
+    let n: usize = first_line.trim().parse().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid problem size: {}", e),
+        )
     })?;
-    let n: usize = first_line.trim().parse()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid problem size: {}", e)))?;
     if n == 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -71,15 +88,26 @@ fn load_problem(filename: &str) -> Result<Problem, io::Error> {
     let mut distance = Vec::with_capacity(n);
     for _ in 0..n {
         if line_idx >= lines.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Unexpected end of file reading distance matrix"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Unexpected end of file reading distance matrix",
+            ));
         }
         let row: Result<Vec<i32>, _> = lines[line_idx]
             .split_whitespace()
             .map(|x| x.parse())
             .collect();
-        let row = row.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid distance matrix data: {}", e)))?;
+        let row = row.map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid distance matrix data: {}", e),
+            )
+        })?;
         if row.len() != n {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Distance matrix row length mismatch"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Distance matrix row length mismatch",
+            ));
         }
         distance.push(row);
         line_idx += 1;
@@ -94,18 +122,36 @@ fn load_problem(filename: &str) -> Result<Problem, io::Error> {
     let mut flow = Vec::with_capacity(n);
     for _ in 0..n {
         if line_idx >= lines.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Unexpected end of file reading flow matrix"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Unexpected end of file reading flow matrix",
+            ));
         }
         let row: Result<Vec<i32>, _> = lines[line_idx]
             .split_whitespace()
             .map(|x| x.parse())
             .collect();
-        let row = row.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid flow matrix data: {}", e)))?;
+        let row = row.map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid flow matrix data: {}", e),
+            )
+        })?;
         if row.len() != n {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Flow matrix row length mismatch"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Flow matrix row length mismatch",
+            ));
         }
         flow.push(row);
         line_idx += 1;
+    }
+
+    if lines[line_idx..].iter().any(|line| !line.trim().is_empty()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Unexpected trailing data after flow matrix",
+        ));
     }
 
     Ok(Problem { n, distance, flow })
@@ -117,7 +163,8 @@ fn calculate_cost(permutation: &[usize], problem: &Problem) -> i64 {
 
     for i in 0..n {
         for j in 0..n {
-            cost += problem.flow[i][j] as i64 * problem.distance[permutation[i]][permutation[j]] as i64;
+            cost +=
+                problem.flow[i][j] as i64 * problem.distance[permutation[i]][permutation[j]] as i64;
         }
     }
 
@@ -211,6 +258,10 @@ fn apply_tabu_search(
 
 fn main() {
     let args = Args::parse();
+    if let Err(message) = validate_args(&args) {
+        eprintln!("error: {message}");
+        std::process::exit(2);
+    }
 
     // Load problem data
     let problem = match load_problem(&args.input_file) {
@@ -221,9 +272,14 @@ fn main() {
         }
     };
 
-    println!("Loaded QAP instance with {} facilities/locations", problem.n);
-    println!("Pack size: {}, Max iterations: {}, TS iterations: {}, Tabu tenure: {}",
-             args.pack_size, args.max_iterations, args.ts_iterations, args.tabu_tenure);
+    println!(
+        "Loaded QAP instance with {} facilities/locations",
+        problem.n
+    );
+    println!(
+        "Pack size: {}, Max iterations: {}, TS iterations: {}, Tabu tenure: {}",
+        args.pack_size, args.max_iterations, args.ts_iterations, args.tabu_tenure
+    );
     println!();
 
     let mut rng = rand::thread_rng();
@@ -330,4 +386,45 @@ fn main() {
     println!();
     println!("Final Best Permutation: {:?}", pack[0].permutation);
     println!("Minimum Cost: {}", pack[0].fitness);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{validate_args, Args};
+
+    fn valid_args() -> Args {
+        Args {
+            input_file: "silicon_spire.txt".to_string(),
+            pack_size: 3,
+            max_iterations: 1,
+            ts_iterations: 0,
+            tabu_tenure: 1,
+        }
+    }
+
+    #[test]
+    fn accepts_minimum_valid_values_and_disabled_tabu_search() {
+        assert!(validate_args(&valid_args()).is_ok());
+    }
+
+    #[test]
+    fn rejects_pack_smaller_than_three() {
+        let mut args = valid_args();
+        args.pack_size = 2;
+        assert!(validate_args(&args).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_iterations() {
+        let mut args = valid_args();
+        args.max_iterations = 0;
+        assert!(validate_args(&args).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_tabu_tenure() {
+        let mut args = valid_args();
+        args.tabu_tenure = 0;
+        assert!(validate_args(&args).is_err());
+    }
 }

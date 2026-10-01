@@ -13,6 +13,8 @@ cargo run --release -- --input-file silicon_spire.txt
 
 An instance file starts with a positive integer `n`, then contains an `n × n` distance matrix and an `n × n` flow matrix. Each matrix row must contain exactly `n` integers.
 
+The parser rejects missing matrix values, malformed rows, and non-whitespace data after the flow matrix.
+
 The objective for an assignment `p` is:
 
 ```text
@@ -30,6 +32,14 @@ sum(i = 0..n-1) sum(j = 0..n-1) flow[i][j] * distance[p[i]][p[j]]
 | `--tabu-tenure N` | `10` | Tabu-list length; must be positive |
 
 For a brief usage summary, run `cargo run -- --help`.
+
+## Checks
+
+```sh
+cargo fmt --check
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
+```
 
 ## Scope and limitations
 
