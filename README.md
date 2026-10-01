@@ -44,6 +44,7 @@ cargo clippy --all-targets --locked -- -D warnings
 ## Scope and limitations
 
 - GWO and Tabu Search are randomized heuristics; they do not guarantee an optimal assignment.
+- The best assignment is retained across generations. After Tabu Search changes it, the solver re-encodes its continuous position before the next GWO iteration.
 - The program uses `thread_rng()` and has no seed option, so runs are not exactly reproducible.
 - The included small instance is a demonstration, not evidence of performance on larger QAP benchmark suites.
 - No exact-solver comparison, industrial data, or real-world savings analysis is included.

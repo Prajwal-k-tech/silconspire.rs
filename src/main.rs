@@ -183,6 +183,24 @@ fn continuous_to_permutation(position: &[f64]) -> Vec<usize> {
     indexed.iter().map(|(idx, _)| *idx).collect()
 }
 
+fn permutation_to_position(permutation: &[usize]) -> Vec<f64> {
+    let mut position = vec![0.0; permutation.len()];
+    let denominator = permutation.len().saturating_sub(1).max(1) as f64;
+    for (rank, &facility) in permutation.iter().enumerate() {
+        position[facility] = rank as f64 / denominator;
+    }
+    position
+}
+
+fn preserve_global_best(pack: &mut [Wolf], global_best: &mut Wolf) {
+    pack.sort_by_key(|wolf| wolf.fitness);
+    if pack[0].fitness < global_best.fitness {
+        *global_best = pack[0].clone();
+    } else {
+        pack[0] = global_best.clone();
+    }
+}
+
 fn apply_tabu_search(
     wolf: &mut Wolf,
     problem: &Problem,
@@ -254,6 +272,7 @@ fn apply_tabu_search(
     // Update wolf with best solution found
     wolf.permutation = best_perm;
     wolf.fitness = best_fitness;
+    wolf.position = permutation_to_position(&wolf.permutation);
 }
 
 fn main() {
@@ -301,9 +320,10 @@ fn main() {
 
     // Sort pack by fitness to identify Alpha, Beta, Delta
     pack.sort_by_key(|w| w.fitness);
-    let mut global_best = pack[0].fitness;
+    let mut global_best = pack[0].clone();
+    let mut global_best_fitness = global_best.fitness;
 
-    println!("Initial best fitness: {}", global_best);
+    println!("Initial best fitness: {}", global_best.fitness);
     println!();
 
     // Main GWO loop
@@ -364,33 +384,32 @@ fn main() {
             &problem,
             args.ts_iterations,
             args.tabu_tenure,
-            &mut global_best,
+            &mut global_best_fitness,
         );
 
         // Replace Alpha if improved
         pack[0] = alpha_improved;
 
-        // Sort pack again after hybridization
-        pack.sort_by_key(|w| w.fitness);
-
-        // Update global best
-        if pack[0].fitness < global_best {
-            global_best = pack[0].fitness;
-        }
+        // Keep the best assignment in the population, even if this generation regresses.
+        preserve_global_best(&mut pack, &mut global_best);
+        global_best_fitness = global_best.fitness;
 
         // Print progress
-        println!("Iteration {}, Best Fitness: {}", t + 1, pack[0].fitness);
+        println!("Iteration {}, Best Fitness: {}", t + 1, global_best.fitness);
     }
 
     // Output final results
     println!();
-    println!("Final Best Permutation: {:?}", pack[0].permutation);
-    println!("Minimum Cost: {}", pack[0].fitness);
+    println!("Final Best Permutation: {:?}", global_best.permutation);
+    println!("Minimum Cost: {}", global_best.fitness);
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{validate_args, Args};
+    use super::{
+        continuous_to_permutation, permutation_to_position, preserve_global_best, validate_args,
+        Args, Wolf,
+    };
 
     fn valid_args() -> Args {
         Args {
@@ -426,5 +445,45 @@ mod tests {
         let mut args = valid_args();
         args.tabu_tenure = 0;
         assert!(validate_args(&args).is_err());
+    }
+
+    #[test]
+    fn permutation_position_encoding_round_trips() {
+        for permutation in [vec![0], vec![1, 0], vec![2, 0, 3, 1], vec![4, 2, 0, 3, 1]] {
+            assert_eq!(
+                continuous_to_permutation(&permutation_to_position(&permutation)),
+                permutation
+            );
+        }
+    }
+
+    fn wolf_with_fitness(fitness: i64) -> Wolf {
+        Wolf {
+            position: vec![fitness as f64],
+            permutation: vec![0],
+            fitness,
+        }
+    }
+
+    #[test]
+    fn retains_global_best_when_current_population_regresses() {
+        let mut best = wolf_with_fitness(100);
+        let mut pack = [wolf_with_fitness(200), wolf_with_fitness(300)];
+
+        preserve_global_best(&mut pack, &mut best);
+
+        assert_eq!(best.fitness, 100);
+        assert_eq!(pack[0].fitness, 100);
+    }
+
+    #[test]
+    fn updates_global_best_when_current_population_improves() {
+        let mut best = wolf_with_fitness(100);
+        let mut pack = [wolf_with_fitness(90), wolf_with_fitness(300)];
+
+        preserve_global_best(&mut pack, &mut best);
+
+        assert_eq!(best.fitness, 90);
+        assert_eq!(pack[0].fitness, 90);
     }
 }
