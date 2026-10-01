@@ -12,11 +12,11 @@ struct Args {
     input_file: String,
 
     /// Number of wolves in the pack
-    #[arg(long, default_value_t = 30)]
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(usize).range(3..))]
     pack_size: usize,
 
     /// Number of GWO iterations
-    #[arg(long, default_value_t = 100)]
+    #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(usize).range(1..))]
     max_iterations: usize,
 
     /// Number of iterations for the Tabu Search
@@ -24,7 +24,7 @@ struct Args {
     ts_iterations: usize,
 
     /// The size of the tabu list
-    #[arg(long, default_value_t = 10)]
+    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(usize).range(1..))]
     tabu_tenure: usize,
 }
 
@@ -49,8 +49,17 @@ fn load_problem(filename: &str) -> Result<Problem, io::Error> {
     let mut line_idx = 0;
 
     // Read problem size
-    let n: usize = lines[line_idx].trim().parse()
+    let first_line = lines.first().ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidData, "Missing problem size")
+    })?;
+    let n: usize = first_line.trim().parse()
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid problem size: {}", e)))?;
+    if n == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Problem size must be positive",
+        ));
+    }
     line_idx += 1;
 
     // Skip empty line
