@@ -1,5 +1,5 @@
 use clap::Parser;
-use rand::prelude::*;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
@@ -26,6 +26,10 @@ struct Args {
     /// The size of the tabu list
     #[arg(long, default_value_t = 10)]
     tabu_tenure: usize,
+
+    /// Random seed for a repeatable run
+    #[arg(long)]
+    seed: Option<u64>,
 }
 
 fn validate_args(args: &Args) -> Result<(), &'static str> {
@@ -301,7 +305,9 @@ fn main() {
     );
     println!();
 
-    let mut rng = rand::thread_rng();
+    let seed = args.seed.unwrap_or_else(|| rand::thread_rng().gen());
+    let mut rng = StdRng::seed_from_u64(seed);
+    println!("Random seed: {seed}");
     let n = problem.n;
 
     // Initialize wolf pack
@@ -418,6 +424,7 @@ mod tests {
             max_iterations: 1,
             ts_iterations: 0,
             tabu_tenure: 1,
+            seed: None,
         }
     }
 
