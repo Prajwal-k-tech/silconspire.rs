@@ -43,13 +43,31 @@ cargo test --locked
 cargo clippy --all-targets --locked -- -D warnings
 ```
 
+## Small QAPLIB evaluation
+
+The standard-library Python runner downloads three small instances from [QAPLIB](https://coral.ise.lehigh.edu/data-sets/qaplib/qaplib-problem-instances-and-solutions/) and verifies each file's SHA-256 before use. It runs seeds 1–30 with pack size 30, 100 GWO iterations, 50 Tabu iterations and tenure 10:
+
+```sh
+python3 benchmarks/run_qaplib.py --solver ./target/release/silconspire
+```
+
+Observed with this Rust release build:
+
+| Instance | Published optimum | Exact runs | Best | Median | Mean gap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Nug12 | 578 | 29/30 | 578 | 578 | 0.046% |
+| Nug14 | 1,014 | 18/30 | 1,014 | 1,014 | 0.158% |
+| Tai12a | 224,416 | 30/30 | 224,416 | 224,416 | 0.000% |
+
+The per-seed CSV can be saved with `--csv results.csv`. These are small-instance checks, not evidence of performance on larger or industrial QAPs. The C++ and Rust programs use different random-number implementations, so equal seed values do not make their runs a paired algorithm comparison. Re-run the script for results from a different build or platform.
+
 ## Scope and limitations
 
 - GWO and Tabu Search are randomized heuristics; they do not guarantee an optimal assignment.
 - The best assignment is retained across generations. After Tabu Search changes it, the solver re-encodes its continuous position before the next GWO iteration.
 - Pass `--seed N` to repeat a run with the same build and input. Without it, the solver generates and prints a seed that can be reused. Reproducibility across different dependency versions or platforms is not guaranteed.
 - The included small instance is a demonstration, not evidence of performance on larger QAP benchmark suites.
-- No exact-solver comparison, industrial data, or real-world savings analysis is included.
+- No industrial data or comparison against exact solvers on larger instances is included.
 
 ## Attribution
 
