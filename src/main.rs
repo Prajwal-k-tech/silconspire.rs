@@ -1,5 +1,5 @@
 use clap::Parser;
-use rand::prelude::*;
+use rand::{rngs::StdRng, Rng, SeedableRng};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
@@ -26,6 +26,23 @@ struct Args {
     /// The size of the tabu list
     #[arg(long, default_value_t = 10)]
     tabu_tenure: usize,
+
+    /// Random seed for a repeatable run
+    #[arg(long)]
+    seed: Option<u64>,
+}
+
+fn validate_args(args: &Args) -> Result<(), &'static str> {
+    if args.pack_size < 3 {
+        return Err("pack size must be at least 3 (needed for alpha/beta/delta)");
+    }
+    if args.max_iterations == 0 {
+        return Err("max iterations must be positive");
+    }
+    if args.tabu_tenure == 0 {
+        return Err("tabu tenure must be positive");
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -49,8 +66,21 @@ fn load_problem(filename: &str) -> Result<Problem, io::Error> {
     let mut line_idx = 0;
 
     // Read problem size
-    let n: usize = lines[line_idx].trim().parse()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid problem size: {}", e)))?;
+    let first_line = lines
+        .first()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Missing problem size"))?;
+    let n: usize = first_line.trim().parse().map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("Invalid problem size: {}", e),
+        )
+    })?;
+    if n == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Problem size must be positive",
+        ));
+    }
     line_idx += 1;
 
     // Skip empty line
@@ -62,15 +92,26 @@ fn load_problem(filename: &str) -> Result<Problem, io::Error> {
     let mut distance = Vec::with_capacity(n);
     for _ in 0..n {
         if line_idx >= lines.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Unexpected end of file reading distance matrix"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Unexpected end of file reading distance matrix",
+            ));
         }
         let row: Result<Vec<i32>, _> = lines[line_idx]
             .split_whitespace()
             .map(|x| x.parse())
             .collect();
-        let row = row.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid distance matrix data: {}", e)))?;
+        let row = row.map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid distance matrix data: {}", e),
+            )
+        })?;
         if row.len() != n {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Distance matrix row length mismatch"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Distance matrix row length mismatch",
+            ));
         }
         distance.push(row);
         line_idx += 1;
@@ -85,34 +126,91 @@ fn load_problem(filename: &str) -> Result<Problem, io::Error> {
     let mut flow = Vec::with_capacity(n);
     for _ in 0..n {
         if line_idx >= lines.len() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Unexpected end of file reading flow matrix"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Unexpected end of file reading flow matrix",
+            ));
         }
         let row: Result<Vec<i32>, _> = lines[line_idx]
             .split_whitespace()
             .map(|x| x.parse())
             .collect();
-        let row = row.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("Invalid flow matrix data: {}", e)))?;
+        let row = row.map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid flow matrix data: {}", e),
+            )
+        })?;
         if row.len() != n {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Flow matrix row length mismatch"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Flow matrix row length mismatch",
+            ));
         }
         flow.push(row);
         line_idx += 1;
     }
 
+    if lines[line_idx..].iter().any(|line| !line.trim().is_empty()) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Unexpected trailing data after flow matrix",
+        ));
+    }
+
     Ok(Problem { n, distance, flow })
 }
 
-fn calculate_cost(permutation: &[usize], problem: &Problem) -> i64 {
+fn calculate_cost(permutation: &[usize], problem: &Problem) -> Result<i64, io::Error> {
     let n = problem.n;
+    if permutation.len() != n {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Assignment size must match the problem size",
+        ));
+    }
+
+    let mut assigned = vec![false; n];
+    for &location in permutation {
+        if location >= n {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Assignment contains an out-of-range location",
+            ));
+        }
+        if assigned[location] {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Assignment must be a permutation",
+            ));
+        }
+        assigned[location] = true;
+    }
+
     let mut cost = 0i64;
 
     for i in 0..n {
         for j in 0..n {
-            cost += problem.flow[i][j] as i64 * problem.distance[permutation[i]][permutation[j]] as i64;
+            let term = i64::from(problem.flow[i][j])
+                * i64::from(problem.distance[permutation[i]][permutation[j]]);
+            cost = cost.checked_add(term).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "QAP objective exceeds the supported signed 64-bit range",
+                )
+            })?;
         }
     }
 
-    cost
+    // i64::MAX is also used internally as the "no candidate yet" sentinel.
+    if cost == i64::MAX {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "QAP objective equals the reserved signed 64-bit sentinel",
+        ));
+    }
+
+    Ok(cost)
 }
 
 fn continuous_to_permutation(position: &[f64]) -> Vec<usize> {
@@ -127,13 +225,31 @@ fn continuous_to_permutation(position: &[f64]) -> Vec<usize> {
     indexed.iter().map(|(idx, _)| *idx).collect()
 }
 
+fn permutation_to_position(permutation: &[usize]) -> Vec<f64> {
+    let mut position = vec![0.0; permutation.len()];
+    let denominator = permutation.len().saturating_sub(1).max(1) as f64;
+    for (rank, &facility) in permutation.iter().enumerate() {
+        position[facility] = rank as f64 / denominator;
+    }
+    position
+}
+
+fn preserve_global_best(pack: &mut [Wolf], global_best: &mut Wolf) {
+    pack.sort_by_key(|wolf| wolf.fitness);
+    if pack[0].fitness < global_best.fitness {
+        *global_best = pack[0].clone();
+    } else {
+        pack[0] = global_best.clone();
+    }
+}
+
 fn apply_tabu_search(
     wolf: &mut Wolf,
     problem: &Problem,
     ts_iterations: usize,
     tabu_tenure: usize,
     global_best: &mut i64,
-) {
+) -> Result<(), io::Error> {
     let n = problem.n;
     let mut tabu_list: VecDeque<(usize, usize)> = VecDeque::new();
     let mut current_perm = wolf.permutation.clone();
@@ -152,7 +268,7 @@ fn apply_tabu_search(
                 new_perm.swap(i, j);
 
                 let move_tuple = if i < j { (i, j) } else { (j, i) };
-                let fitness = calculate_cost(&new_perm, problem);
+                let fitness = calculate_cost(&new_perm, problem)?;
 
                 let is_tabu = tabu_list.contains(&move_tuple);
                 let aspiration = fitness < *global_best;
@@ -198,47 +314,61 @@ fn apply_tabu_search(
     // Update wolf with best solution found
     wolf.permutation = best_perm;
     wolf.fitness = best_fitness;
+    wolf.position = permutation_to_position(&wolf.permutation);
+    Ok(())
 }
 
 fn main() {
     let args = Args::parse();
+    if let Err(message) = validate_args(&args) {
+        eprintln!("error: {message}");
+        std::process::exit(2);
+    }
 
+    if let Err(error) = run_solver(&args) {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run_solver(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     // Load problem data
-    let problem = match load_problem(&args.input_file) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Error loading problem file '{}': {}", args.input_file, e);
-            std::process::exit(1);
-        }
-    };
+    let problem = load_problem(&args.input_file)?;
 
-    println!("Loaded QAP instance with {} facilities/locations", problem.n);
-    println!("Pack size: {}, Max iterations: {}, TS iterations: {}, Tabu tenure: {}",
-             args.pack_size, args.max_iterations, args.ts_iterations, args.tabu_tenure);
+    println!(
+        "Loaded QAP instance with {} facilities/locations",
+        problem.n
+    );
+    println!(
+        "Pack size: {}, Max iterations: {}, TS iterations: {}, Tabu tenure: {}",
+        args.pack_size, args.max_iterations, args.ts_iterations, args.tabu_tenure
+    );
     println!();
 
-    let mut rng = rand::thread_rng();
+    let seed = args.seed.unwrap_or_else(|| rand::thread_rng().gen());
+    let mut rng = StdRng::seed_from_u64(seed);
+    println!("Random seed: {seed}");
     let n = problem.n;
 
     // Initialize wolf pack
-    let mut pack: Vec<Wolf> = (0..args.pack_size)
-        .map(|_| {
-            let position: Vec<f64> = (0..n).map(|_| rng.gen()).collect();
-            let permutation = continuous_to_permutation(&position);
-            let fitness = calculate_cost(&permutation, &problem);
-            Wolf {
-                position,
-                permutation,
-                fitness,
-            }
-        })
-        .collect();
+    let mut pack = Vec::with_capacity(args.pack_size);
+    for _ in 0..args.pack_size {
+        let position: Vec<f64> = (0..n).map(|_| rng.gen()).collect();
+        let permutation = continuous_to_permutation(&position);
+        let fitness = calculate_cost(&permutation, &problem)?;
+        pack.push(Wolf {
+            position,
+            permutation,
+            fitness,
+        });
+    }
 
     // Sort pack by fitness to identify Alpha, Beta, Delta
     pack.sort_by_key(|w| w.fitness);
-    let mut global_best = pack[0].fitness;
+    let mut global_best = pack[0].clone();
+    let mut global_best_fitness = global_best.fitness;
 
-    println!("Initial best fitness: {}", global_best);
+    println!("Initial best fitness: {}", global_best.fitness);
     println!();
 
     // Main GWO loop
@@ -286,7 +416,7 @@ fn main() {
 
             // Convert new position to permutation and calculate fitness
             wolf.permutation = continuous_to_permutation(&wolf.position);
-            wolf.fitness = calculate_cost(&wolf.permutation, &problem);
+            wolf.fitness = calculate_cost(&wolf.permutation, &problem)?;
         }
 
         // Sort pack to get new Alpha
@@ -299,26 +429,140 @@ fn main() {
             &problem,
             args.ts_iterations,
             args.tabu_tenure,
-            &mut global_best,
-        );
+            &mut global_best_fitness,
+        )?;
 
         // Replace Alpha if improved
         pack[0] = alpha_improved;
 
-        // Sort pack again after hybridization
-        pack.sort_by_key(|w| w.fitness);
-
-        // Update global best
-        if pack[0].fitness < global_best {
-            global_best = pack[0].fitness;
-        }
+        // Keep the best assignment in the population, even if this generation regresses.
+        preserve_global_best(&mut pack, &mut global_best);
+        global_best_fitness = global_best.fitness;
 
         // Print progress
-        println!("Iteration {}, Best Fitness: {}", t + 1, pack[0].fitness);
+        println!("Iteration {}, Best Fitness: {}", t + 1, global_best.fitness);
     }
 
     // Output final results
     println!();
-    println!("Final Best Permutation: {:?}", pack[0].permutation);
-    println!("Minimum Cost: {}", pack[0].fitness);
+    println!("Final Best Permutation: {:?}", global_best.permutation);
+    println!("Minimum Cost: {}", global_best.fitness);
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        calculate_cost, continuous_to_permutation, permutation_to_position, preserve_global_best,
+        validate_args, Args, Problem, Wolf,
+    };
+
+    fn valid_args() -> Args {
+        Args {
+            input_file: "silicon_spire.txt".to_string(),
+            pack_size: 3,
+            max_iterations: 1,
+            ts_iterations: 0,
+            tabu_tenure: 1,
+            seed: None,
+        }
+    }
+
+    #[test]
+    fn accepts_minimum_valid_values_and_disabled_tabu_search() {
+        assert!(validate_args(&valid_args()).is_ok());
+    }
+
+    #[test]
+    fn rejects_pack_smaller_than_three() {
+        let mut args = valid_args();
+        args.pack_size = 2;
+        assert!(validate_args(&args).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_iterations() {
+        let mut args = valid_args();
+        args.max_iterations = 0;
+        assert!(validate_args(&args).is_err());
+    }
+
+    #[test]
+    fn rejects_zero_tabu_tenure() {
+        let mut args = valid_args();
+        args.tabu_tenure = 0;
+        assert!(validate_args(&args).is_err());
+    }
+
+    fn small_problem() -> Problem {
+        Problem {
+            n: 2,
+            distance: vec![vec![1, 2], vec![3, 4]],
+            flow: vec![vec![5, 6], vec![7, 8]],
+        }
+    }
+
+    #[test]
+    fn calculates_qap_objective_for_valid_assignment() {
+        assert_eq!(calculate_cost(&[1, 0], &small_problem()).unwrap(), 60);
+    }
+
+    #[test]
+    fn rejects_non_permutation_assignments() {
+        assert!(calculate_cost(&[0, 0], &small_problem()).is_err());
+        assert!(calculate_cost(&[0, 2], &small_problem()).is_err());
+        assert!(calculate_cost(&[0], &small_problem()).is_err());
+    }
+
+    #[test]
+    fn rejects_qap_objective_outside_signed_64_bit_range() {
+        let problem = Problem {
+            n: 2,
+            distance: vec![vec![i32::MAX; 2]; 2],
+            flow: vec![vec![i32::MAX; 2]; 2],
+        };
+
+        assert!(calculate_cost(&[0, 1], &problem).is_err());
+    }
+
+    #[test]
+    fn permutation_position_encoding_round_trips() {
+        for permutation in [vec![0], vec![1, 0], vec![2, 0, 3, 1], vec![4, 2, 0, 3, 1]] {
+            assert_eq!(
+                continuous_to_permutation(&permutation_to_position(&permutation)),
+                permutation
+            );
+        }
+    }
+
+    fn wolf_with_fitness(fitness: i64) -> Wolf {
+        Wolf {
+            position: vec![fitness as f64],
+            permutation: vec![0],
+            fitness,
+        }
+    }
+
+    #[test]
+    fn retains_global_best_when_current_population_regresses() {
+        let mut best = wolf_with_fitness(100);
+        let mut pack = [wolf_with_fitness(200), wolf_with_fitness(300)];
+
+        preserve_global_best(&mut pack, &mut best);
+
+        assert_eq!(best.fitness, 100);
+        assert_eq!(pack[0].fitness, 100);
+    }
+
+    #[test]
+    fn updates_global_best_when_current_population_improves() {
+        let mut best = wolf_with_fitness(100);
+        let mut pack = [wolf_with_fitness(90), wolf_with_fitness(300)];
+
+        preserve_global_best(&mut pack, &mut best);
+
+        assert_eq!(best.fitness, 90);
+        assert_eq!(pack[0].fitness, 90);
+    }
 }

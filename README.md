@@ -1,140 +1,56 @@
-# SiliconSpire.rs
+# SiliconSpire QAP Solver (Rust)
 
-**A command-line tool for solving the Quadratic Assignment Problem (QAP) using hybrid Grey Wolf Optimizer + Tabu Search.**
+A Rust command-line heuristic for the Quadratic Assignment Problem. It combines Grey Wolf Optimization (GWO), a continuous-position-to-permutation decoder, and swap-based Tabu Search.
 
-## Installation (Choose Your Method)
+The bundled cleanroom instance is illustrative. This repository does not demonstrate a deployed semiconductor-layout system, industrial savings, or benchmark performance.
 
-### Option 1: One-Line Install (Recommended)
-**Linux/macOS:**
-```bash
-curl -sSL https://raw.githubusercontent.com/Prajwal-k-tech/silconspire.rs/main/install.sh | bash
-```
-**Windows (PowerShell as Administrator):**
-```powershell
-iwr https://raw.githubusercontent.com/Prajwal-k-tech/silconspire.rs/main/install.bat -outfile install.bat; .\install.bat
+## Build and run
+
+```sh
+cargo build --release
+cargo run --release -- --input-file silicon_spire.txt
+cargo run --release -- --input-file silicon_spire.txt --seed 42
 ```
 
+An instance file starts with a positive integer `n`, then contains an `n × n` distance matrix and an `n × n` flow matrix. Each matrix row must contain exactly `n` integers.
 
-### Option 2: From Source (Requires Rust)
-```bash
-git clone https://github.com/Prajwal-k-tech/silconspire.rs.git
-cd silconspire.rs
-cargo install --path .
-```
-## Quick Start
+The parser rejects missing matrix values, malformed rows, and non-whitespace data after the flow matrix. Assignments are checked as permutations of `0..n-1`; objective costs that overflow signed 64-bit arithmetic return an error.
 
-**Verify installation:**
-```bash
-silconspire --help
+The objective for an assignment `p` is:
+
+```text
+sum(i = 0..n-1) sum(j = 0..n-1) flow[i][j] * distance[p[i]][p[j]]
 ```
 
-**Run with example problem:**
-```bash
-# Download example
-curl -O https://raw.githubusercontent.com/Prajwal-k-tech/silconspire.rs/main/silicon_spire.txt
+## Options
 
-# Solve the Silicon Spire layout problem!
-silconspire --input-file silicon_spire.txt
+| Option | Default | Meaning |
+| --- | ---: | --- |
+| `--input-file FILE` | `silicon_spire.txt` | QAP instance path |
+| `--pack-size N` | `30` | GWO population; at least three candidates are required |
+| `--max-iterations N` | `100` | GWO iterations; must be positive |
+| `--ts-iterations N` | `50` | Tabu iterations per invocation |
+| `--tabu-tenure N` | `10` | Tabu-list length; must be positive |
+| `--seed N` | generated | Optional unsigned 64-bit seed; the selected seed is printed for repeat runs |
+
+For a brief usage summary, run `cargo run -- --help`.
+
+## Checks
+
+```sh
+cargo fmt --check
+cargo test --locked
+cargo clippy --all-targets --locked -- -D warnings
 ```
 
-**Custom optimization run:**
-```bash
-silconspire --input-file my_problem.txt --pack-size 50 --max-iterations 200
-```
+## Scope and limitations
 
-## What Problem Does This Solve?
+- GWO and Tabu Search are randomized heuristics; they do not guarantee an optimal assignment.
+- The best assignment is retained across generations. After Tabu Search changes it, the solver re-encodes its continuous position before the next GWO iteration.
+- Pass `--seed N` to repeat a run with the same build and input. Without it, the solver generates and prints a seed that can be reused. Reproducibility across different dependency versions or platforms is not guaranteed.
+- The included small instance is a demonstration, not evidence of performance on larger QAP benchmark suites.
+- No exact-solver comparison, industrial data, or real-world savings analysis is included.
 
-### The Silicon Spire Challenge:
+## Attribution
 
-**Silicon Spire Dynamics** is building a $2B semiconductor fabrication plant. They need to optimally place **4 critical processing modules** in designated cleanroom bays to minimize wafer pod travel distance.
-
-**The Stakes:** Poor layout = millions in lost efficiency, increased defects, higher energy costs.
-
-**The Modules:**
--  **Photolithography Bay** - Projects circuit patterns onto wafers
-- **Etching & Cleaning Station** - Removes material and cleans wafers  
-- **Deposition Chamber** - Adds ultra-thin material layers
-- **Metrology & Inspection Hub** - Inspects wafers for defects
-
-### The Mathematical Problem: QAP
-
-The **Quadratic Assignment Problem** seeks to minimize:
-```
-Cost = Σᵢ Σⱼ flow[i][j] × distance[π(i)][π(j)] 
-```
-This is the cost of 1 layout (1 permutation)
-This is an **NP-hard** problem - no known polynomial-time solution exists for large instances.
-
-## The Solution: Hybrid Metaheuristic
-
-Our tool uses a comibination of metaheuristic algorithm
-
-- **Grey Wolf Optimizer (GWO)**: Bio-inspired global search mimicking wolf pack hunting
-- **Tabu Search (TS)**: Intelligent local search with memory to avoid cycles  
-- **Largest Value Priority (LVP)**: Converts continuous solutions to discrete permutations
-
-### Why This Works
-- **GWO** explores the vast solution space efficiently
-- **Tabu Search** intensively improves promising solutions
-- **Hybridization** combines exploration + exploitation for optimal results
-
-## Usage & Examples
-
-### Command Line Options
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--input-file` | QAP problem file path | `silicon_spire.txt` |
-| `--pack-size` | Number of wolves in pack | `30` |
-| `--max-iterations` | GWO iterations | `100` |
-| `--ts-iterations` | Tabu Search iterations | `50` |
-| `--tabu-tenure` | Tabu list size | `10` |
-
-### Input File Format
-```
-4
-
-0 10 15 20
-10 0 35 25  
-15 35 0 30
-20 25 30 0
-
-0 90 120 80
-90 0 40 50
-120 40 0 70
-80 50 70 0
-```
-- Line 1: Problem size `n`
-- Empty line + Distance matrix (n×n)  
-- Empty line + Flow matrix (n×n)
-
-##  Performance Results
-
-### Silicon Spire Solution
-- **Optimal Layout Found**: `[0, 2, 1, 3]`
-- **Minimum Cost**: **17,600** (verified optimal)
-- **Success Rate**: 100% across multiple runs
-- **Real Impact**: Saves millions in production costs
-
-
-
-## Research Context
-
-This implementation demonstrates:
-- **Metaheuristic Hybridization** - State-of-the-art optimization technique
-- **Discrete Optimization** - Handling combinatorial problems elegantly  
-- **High-Performance Computing** - Rust's advantage for scientific computing
-
-
-##  License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-##  References
-
-- Mirjalili, S., et al. (2014). Grey wolf optimizer. *Advances in Engineering Software*, 69, 46-61.
-- Glover, F. (1986). Future paths for integer programming and AI. *Computers & OR*, 13(5), 533-549.
-- Loiola, E. M., et al. (2007). A survey for the quadratic assignment problem. *European JOR*, 176(2), 657-690.
-
----
-
-*🦀 Built with Rust for maximum performance and reliability*
+This is an educational optimization prototype. The cleanroom narrative and included data are illustrative. See the source and Git history for implementation details.
