@@ -14,7 +14,7 @@ cargo run --release -- --input-file silicon_spire.txt --seed 42
 
 An instance file starts with a positive integer `n`, then contains an `n × n` distance matrix and an `n × n` flow matrix. Each matrix row must contain exactly `n` integers.
 
-The parser rejects missing matrix values, malformed rows, and non-whitespace data after the flow matrix.
+The parser rejects missing matrix values, malformed rows, and non-whitespace data after the flow matrix. Assignments are checked as permutations of `0..n-1`; objective costs that overflow signed 64-bit arithmetic return an error.
 
 The objective for an assignment `p` is:
 

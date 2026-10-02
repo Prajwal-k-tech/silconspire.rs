@@ -161,18 +161,56 @@ fn load_problem(filename: &str) -> Result<Problem, io::Error> {
     Ok(Problem { n, distance, flow })
 }
 
-fn calculate_cost(permutation: &[usize], problem: &Problem) -> i64 {
+fn calculate_cost(permutation: &[usize], problem: &Problem) -> Result<i64, io::Error> {
     let n = problem.n;
+    if permutation.len() != n {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Assignment size must match the problem size",
+        ));
+    }
+
+    let mut assigned = vec![false; n];
+    for &location in permutation {
+        if location >= n {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Assignment contains an out-of-range location",
+            ));
+        }
+        if assigned[location] {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Assignment must be a permutation",
+            ));
+        }
+        assigned[location] = true;
+    }
+
     let mut cost = 0i64;
 
     for i in 0..n {
         for j in 0..n {
-            cost +=
-                problem.flow[i][j] as i64 * problem.distance[permutation[i]][permutation[j]] as i64;
+            let term = i64::from(problem.flow[i][j])
+                * i64::from(problem.distance[permutation[i]][permutation[j]]);
+            cost = cost.checked_add(term).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "QAP objective exceeds the supported signed 64-bit range",
+                )
+            })?;
         }
     }
 
-    cost
+    // i64::MAX is also used internally as the "no candidate yet" sentinel.
+    if cost == i64::MAX {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "QAP objective equals the reserved signed 64-bit sentinel",
+        ));
+    }
+
+    Ok(cost)
 }
 
 fn continuous_to_permutation(position: &[f64]) -> Vec<usize> {
@@ -211,7 +249,7 @@ fn apply_tabu_search(
     ts_iterations: usize,
     tabu_tenure: usize,
     global_best: &mut i64,
-) {
+) -> Result<(), io::Error> {
     let n = problem.n;
     let mut tabu_list: VecDeque<(usize, usize)> = VecDeque::new();
     let mut current_perm = wolf.permutation.clone();
@@ -230,7 +268,7 @@ fn apply_tabu_search(
                 new_perm.swap(i, j);
 
                 let move_tuple = if i < j { (i, j) } else { (j, i) };
-                let fitness = calculate_cost(&new_perm, problem);
+                let fitness = calculate_cost(&new_perm, problem)?;
 
                 let is_tabu = tabu_list.contains(&move_tuple);
                 let aspiration = fitness < *global_best;
@@ -277,6 +315,7 @@ fn apply_tabu_search(
     wolf.permutation = best_perm;
     wolf.fitness = best_fitness;
     wolf.position = permutation_to_position(&wolf.permutation);
+    Ok(())
 }
 
 fn main() {
@@ -286,14 +325,15 @@ fn main() {
         std::process::exit(2);
     }
 
+    if let Err(error) = run_solver(&args) {
+        eprintln!("Error: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run_solver(args: &Args) -> Result<(), Box<dyn std::error::Error>> {
     // Load problem data
-    let problem = match load_problem(&args.input_file) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Error loading problem file '{}': {}", args.input_file, e);
-            std::process::exit(1);
-        }
-    };
+    let problem = load_problem(&args.input_file)?;
 
     println!(
         "Loaded QAP instance with {} facilities/locations",
@@ -311,18 +351,17 @@ fn main() {
     let n = problem.n;
 
     // Initialize wolf pack
-    let mut pack: Vec<Wolf> = (0..args.pack_size)
-        .map(|_| {
-            let position: Vec<f64> = (0..n).map(|_| rng.gen()).collect();
-            let permutation = continuous_to_permutation(&position);
-            let fitness = calculate_cost(&permutation, &problem);
-            Wolf {
-                position,
-                permutation,
-                fitness,
-            }
-        })
-        .collect();
+    let mut pack = Vec::with_capacity(args.pack_size);
+    for _ in 0..args.pack_size {
+        let position: Vec<f64> = (0..n).map(|_| rng.gen()).collect();
+        let permutation = continuous_to_permutation(&position);
+        let fitness = calculate_cost(&permutation, &problem)?;
+        pack.push(Wolf {
+            position,
+            permutation,
+            fitness,
+        });
+    }
 
     // Sort pack by fitness to identify Alpha, Beta, Delta
     pack.sort_by_key(|w| w.fitness);
@@ -377,7 +416,7 @@ fn main() {
 
             // Convert new position to permutation and calculate fitness
             wolf.permutation = continuous_to_permutation(&wolf.position);
-            wolf.fitness = calculate_cost(&wolf.permutation, &problem);
+            wolf.fitness = calculate_cost(&wolf.permutation, &problem)?;
         }
 
         // Sort pack to get new Alpha
@@ -391,7 +430,7 @@ fn main() {
             args.ts_iterations,
             args.tabu_tenure,
             &mut global_best_fitness,
-        );
+        )?;
 
         // Replace Alpha if improved
         pack[0] = alpha_improved;
@@ -408,13 +447,15 @@ fn main() {
     println!();
     println!("Final Best Permutation: {:?}", global_best.permutation);
     println!("Minimum Cost: {}", global_best.fitness);
+
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        continuous_to_permutation, permutation_to_position, preserve_global_best, validate_args,
-        Args, Wolf,
+        calculate_cost, continuous_to_permutation, permutation_to_position, preserve_global_best,
+        validate_args, Args, Problem, Wolf,
     };
 
     fn valid_args() -> Args {
@@ -452,6 +493,37 @@ mod tests {
         let mut args = valid_args();
         args.tabu_tenure = 0;
         assert!(validate_args(&args).is_err());
+    }
+
+    fn small_problem() -> Problem {
+        Problem {
+            n: 2,
+            distance: vec![vec![1, 2], vec![3, 4]],
+            flow: vec![vec![5, 6], vec![7, 8]],
+        }
+    }
+
+    #[test]
+    fn calculates_qap_objective_for_valid_assignment() {
+        assert_eq!(calculate_cost(&[1, 0], &small_problem()).unwrap(), 60);
+    }
+
+    #[test]
+    fn rejects_non_permutation_assignments() {
+        assert!(calculate_cost(&[0, 0], &small_problem()).is_err());
+        assert!(calculate_cost(&[0, 2], &small_problem()).is_err());
+        assert!(calculate_cost(&[0], &small_problem()).is_err());
+    }
+
+    #[test]
+    fn rejects_qap_objective_outside_signed_64_bit_range() {
+        let problem = Problem {
+            n: 2,
+            distance: vec![vec![i32::MAX; 2]; 2],
+            flow: vec![vec![i32::MAX; 2]; 2],
+        };
+
+        assert!(calculate_cost(&[0, 1], &problem).is_err());
     }
 
     #[test]
